@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
@@ -77,11 +78,61 @@ namespace ZeroNetwork.Tests
         }
 
         [Fact]
+        public async Task PortScanner_ScanPortsAsync_WithStreamingCallback_Invoked()
+        {
+            var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            int openPort = ((IPEndPoint)listener.LocalEndpoint).Port;
+
+            try
+            {
+                int[] testPorts = new[] { openPort, 59997 };
+                var streamedResults = new List<PortScanResult>();
+
+                await PortScanner.ScanPortsAsync(
+                    "127.0.0.1",
+                    testPorts,
+                    timeoutMs: 300,
+                    onlyOpenPorts: false,
+                    onResult: res =>
+                    {
+                        lock (streamedResults) streamedResults.Add(res);
+                    });
+
+                Assert.Equal(2, streamedResults.Count);
+            }
+            finally
+            {
+                listener.Stop();
+            }
+        }
+
+        [Fact]
         public async Task PathMtuDiscovery_Loopback_Succeeds()
         {
-            // Testing loopback MTU up to standard Ethernet 1500
             int discoveredMtu = await PathMtuDiscovery.DiscoverMtuAsync("127.0.0.1", minMtu: 576, maxMtu: 1500, timeoutMs: 500);
             Assert.True(discoveredMtu >= 576, $"Expected MTU >= 576, got {discoveredMtu}");
+        }
+
+        [Fact]
+        public void NetworkThroughputMeter_Lifecycle_Succeeds()
+        {
+            using (var meter = new NetworkThroughputMeter(sampleIntervalMs: 500))
+            {
+                meter.Start();
+                Assert.True(meter.IsRunning);
+                meter.Stop();
+                Assert.False(meter.IsRunning);
+            }
+        }
+
+        [Fact]
+        public async Task DnsProbe_ResolveIPv4_IPString_ReturnsParsedIP()
+        {
+            // When already an IP address, DnsProbe returns immediately without network query
+            var ip = await DnsProbe.ResolveIPv4Async("127.0.0.1");
+            Assert.NotNull(ip);
+            Assert.Equal(IPAddress.Loopback, ip);
         }
     }
 }

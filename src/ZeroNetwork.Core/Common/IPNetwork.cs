@@ -250,25 +250,39 @@ namespace ZeroNetwork.Common
 
         private static uint ToUint(IPAddress ip)
         {
+#if NET8_0_OR_GREATER
+            Span<byte> bytes = stackalloc byte[4];
+            ip.TryWriteBytes(bytes, out _);
+            return ((uint)bytes[0] << 24) |
+                   ((uint)bytes[1] << 16) |
+                   ((uint)bytes[2] << 8) |
+                   bytes[3];
+#else
             byte[] bytes = ip.GetAddressBytes();
-            if (BitConverter.IsLittleEndian)
-            {
-                return ((uint)bytes[0] << 24) |
-                       ((uint)bytes[1] << 16) |
-                       ((uint)bytes[2] << 8) |
-                       bytes[3];
-            }
-            return BitConverter.ToUInt32(bytes, 0);
+            return ((uint)bytes[0] << 24) |
+                   ((uint)bytes[1] << 16) |
+                   ((uint)bytes[2] << 8) |
+                   bytes[3];
+#endif
         }
 
         private static IPAddress FromUint(uint value)
         {
+#if NET8_0_OR_GREATER
+            Span<byte> bytes = stackalloc byte[4];
+            bytes[0] = (byte)((value >> 24) & 0xFF);
+            bytes[1] = (byte)((value >> 16) & 0xFF);
+            bytes[2] = (byte)((value >> 8) & 0xFF);
+            bytes[3] = (byte)(value & 0xFF);
+            return new IPAddress((ReadOnlySpan<byte>)bytes);
+#else
             byte[] bytes = new byte[4];
             bytes[0] = (byte)((value >> 24) & 0xFF);
             bytes[1] = (byte)((value >> 16) & 0xFF);
             bytes[2] = (byte)((value >> 8) & 0xFF);
             bytes[3] = (byte)(value & 0xFF);
             return new IPAddress(bytes);
+#endif
         }
 
         public string ToCidrString() => $"{NetworkAddress}/{_cidrPrefix}";

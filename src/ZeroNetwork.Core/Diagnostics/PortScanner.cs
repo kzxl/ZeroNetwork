@@ -31,12 +31,12 @@ namespace ZeroNetwork.Diagnostics
     }
 
     /// <summary>
-    /// High-throughput asynchronous subnet and port range scanner with bounded concurrency.
+    /// High-throughput asynchronous subnet and port range scanner with bounded concurrency and real-time streaming.
     /// </summary>
     public static class PortScanner
     {
         /// <summary>
-        /// Scans a range of TCP ports on a single target host.
+        /// Scans a range of TCP ports on a single target host with optional real-time streaming callback.
         /// </summary>
         public static async Task<List<PortScanResult>> ScanPortRangeAsync(
             string host,
@@ -45,6 +45,7 @@ namespace ZeroNetwork.Diagnostics
             int timeoutMs = 500,
             int maxConcurrency = 64,
             bool onlyOpenPorts = false,
+            Action<PortScanResult>? onResult = null,
             CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(host)) throw new ArgumentNullException(nameof(host));
@@ -58,11 +59,11 @@ namespace ZeroNetwork.Diagnostics
                 ports[i] = startPort + i;
             }
 
-            return await ScanPortsAsync(host, ports, timeoutMs, maxConcurrency, onlyOpenPorts, cancellationToken).ConfigureAwait(false);
+            return await ScanPortsAsync(host, ports, timeoutMs, maxConcurrency, onlyOpenPorts, onResult, cancellationToken).ConfigureAwait(false);
         }
 
         /// <summary>
-        /// Scans an array of TCP ports on a single target host.
+        /// Scans an array of TCP ports on a single target host with optional real-time streaming callback.
         /// </summary>
         public static async Task<List<PortScanResult>> ScanPortsAsync(
             string host,
@@ -70,6 +71,7 @@ namespace ZeroNetwork.Diagnostics
             int timeoutMs = 500,
             int maxConcurrency = 64,
             bool onlyOpenPorts = false,
+            Action<PortScanResult>? onResult = null,
             CancellationToken cancellationToken = default)
         {
             if (ports == null || ports.Length == 0) return new List<PortScanResult>();
@@ -101,6 +103,7 @@ namespace ZeroNetwork.Diagnostics
                                 {
                                     results.Add(res);
                                 }
+                                onResult?.Invoke(res);
                             }
                         }
                         finally
@@ -117,7 +120,7 @@ namespace ZeroNetwork.Diagnostics
         }
 
         /// <summary>
-        /// Scans a specific TCP port across all usable hosts in an <see cref="IPNetwork"/> subnet.
+        /// Scans a specific TCP port across all usable hosts in an <see cref="IPNetwork"/> subnet with optional real-time streaming callback.
         /// </summary>
         public static async Task<List<PortScanResult>> ScanSubnetAsync(
             IPNetwork subnet,
@@ -125,6 +128,7 @@ namespace ZeroNetwork.Diagnostics
             int timeoutMs = 500,
             int maxConcurrency = 64,
             bool onlyOpenPorts = true,
+            Action<PortScanResult>? onResult = null,
             CancellationToken cancellationToken = default)
         {
             var hosts = new List<string>();
@@ -160,6 +164,7 @@ namespace ZeroNetwork.Diagnostics
                                 {
                                     results.Add(res);
                                 }
+                                onResult?.Invoke(res);
                             }
                         }
                         finally
