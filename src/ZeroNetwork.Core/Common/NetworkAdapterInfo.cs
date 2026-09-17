@@ -20,7 +20,13 @@ namespace ZeroNetwork.Common
         public List<string> IPv6Addresses { get; set; } = new List<string>();
         public List<string> Gateways { get; set; } = new List<string>();
         public List<string> DnsAddresses { get; set; } = new List<string>();
+        public List<string> DhcpServers { get; set; } = new List<string>();
+        public string SubnetMask { get; set; } = string.Empty;
+        public int? CidrPrefix { get; set; }
+        public string BroadcastAddress { get; set; } = string.Empty;
+        public string GatewayMacAddress { get; set; } = string.Empty;
         public bool IsVirtual { get; set; }
+        public bool SupportsMulticast { get; set; }
         public long Speed { get; set; }
 
         public override string ToString()

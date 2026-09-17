@@ -1,16 +1,16 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text;
 using ZeroNetwork.Common;
+using IPNetwork = ZeroNetwork.Common.IPNetwork;
 
 namespace ZeroNetwork.Discovery
 {
     /// <summary>
-    /// Provides discovery and inspection of local network interfaces, physical MAC addresses, and IP configurations.
+    /// Provides discovery and inspection of local network interfaces, physical MAC addresses, IP configurations, and subnets.
     /// </summary>
     public static class NetworkInfo
     {
@@ -24,24 +24,53 @@ namespace ZeroNetwork.Discovery
         {
             try
             {
-                var nics = NetworkInterface.GetAllNetworkInterfaces()
-                    .Where(n => n.OperationalStatus == OperationalStatus.Up)
-                    .Where(n => n.NetworkInterfaceType != NetworkInterfaceType.Loopback && n.NetworkInterfaceType != NetworkInterfaceType.Tunnel)
-                    .ToList();
+                NetworkInterface[] allNics = NetworkInterface.GetAllNetworkInterfaces();
+                NetworkInterface? bestNic = null;
+                int bestScore = -1;
 
-                if (nics.Count == 0) return LoopbackIPv4;
-
-                // Sort: PreferredType first -> Physical Ethernet -> Wireless -> Other physical -> Virtual fallback
-                var sortedNics = nics
-                    .OrderByDescending(n => preferredType.HasValue && n.NetworkInterfaceType == preferredType.Value && !VirtualAdapterFilter.IsVirtual(n))
-                    .ThenByDescending(n => n.NetworkInterfaceType == NetworkInterfaceType.Ethernet && !VirtualAdapterFilter.IsVirtual(n))
-                    .ThenByDescending(n => n.NetworkInterfaceType == NetworkInterfaceType.Wireless80211 && !VirtualAdapterFilter.IsVirtual(n))
-                    .ThenByDescending(n => !VirtualAdapterFilter.IsVirtual(n))
-                    .ToList();
-
-                foreach (var nic in sortedNics)
+                for (int i = 0; i < allNics.Length; i++)
                 {
-                    var ipProps = nic.GetIPProperties();
+                    var nic = allNics[i];
+                    if (nic.OperationalStatus != OperationalStatus.Up ||
+                        nic.NetworkInterfaceType == NetworkInterfaceType.Loopback ||
+                        nic.NetworkInterfaceType == NetworkInterfaceType.Tunnel)
+                    {
+                        continue;
+                    }
+
+                    bool isVirtual = VirtualAdapterFilter.IsVirtual(nic);
+                    int score = 0;
+
+                    if (!isVirtual) score += 100;
+                    if (preferredType.HasValue && nic.NetworkInterfaceType == preferredType.Value) score += 50;
+                    else if (nic.NetworkInterfaceType == NetworkInterfaceType.Ethernet) score += 30;
+                    else if (nic.NetworkInterfaceType == NetworkInterfaceType.Wireless80211) score += 20;
+
+                    if (score > bestScore)
+                    {
+                        // Check if it has at least one valid IPv4 address
+                        var ipProps = nic.GetIPProperties();
+                        bool hasIpv4 = false;
+                        foreach (var addr in ipProps.UnicastAddresses)
+                        {
+                            if (addr.Address.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(addr.Address))
+                            {
+                                hasIpv4 = true;
+                                break;
+                            }
+                        }
+
+                        if (hasIpv4)
+                        {
+                            bestScore = score;
+                            bestNic = nic;
+                        }
+                    }
+                }
+
+                if (bestNic != null)
+                {
+                    var ipProps = bestNic.GetIPProperties();
                     foreach (var addr in ipProps.UnicastAddresses)
                     {
                         if (addr.Address.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(addr.Address))
@@ -76,17 +105,22 @@ namespace ZeroNetwork.Discovery
             var result = new List<string>();
             try
             {
-                var nics = NetworkInterface.GetAllNetworkInterfaces()
-                    .Where(n => n.OperationalStatus == OperationalStatus.Up)
-                    .Where(n => n.NetworkInterfaceType != NetworkInterfaceType.Loopback && n.NetworkInterfaceType != NetworkInterfaceType.Tunnel);
-
-                if (excludeVirtual)
+                var nics = NetworkInterface.GetAllNetworkInterfaces();
+                for (int i = 0; i < nics.Length; i++)
                 {
-                    nics = nics.Where(n => !VirtualAdapterFilter.IsVirtual(n));
-                }
+                    var nic = nics[i];
+                    if (nic.OperationalStatus != OperationalStatus.Up ||
+                        nic.NetworkInterfaceType == NetworkInterfaceType.Loopback ||
+                        nic.NetworkInterfaceType == NetworkInterfaceType.Tunnel)
+                    {
+                        continue;
+                    }
 
-                foreach (var nic in nics)
-                {
+                    if (excludeVirtual && VirtualAdapterFilter.IsVirtual(nic))
+                    {
+                        continue;
+                    }
+
                     var ipProps = nic.GetIPProperties();
                     foreach (var addr in ipProps.UnicastAddresses)
                     {
@@ -110,40 +144,93 @@ namespace ZeroNetwork.Discovery
         }
 
         /// <summary>
-        /// Gets the MAC address of the primary active physical network card.
+        /// Gets the MAC address of the primary active physical network card or specified interface name.
         /// </summary>
         /// <param name="separator">Delimiter between bytes (e.g. "-", ":", or "" for continuous string).</param>
-        public static string GetPhysicalMacAddress(string separator = "-")
+        /// <param name="preferredInterfaceName">Optional interface name or description to select a specific physical NIC.</param>
+        public static string GetPhysicalMacAddress(string separator = "-", string? preferredInterfaceName = null)
         {
             try
             {
-                var nic = NetworkInterface.GetAllNetworkInterfaces()
-                    .Where(n => n.OperationalStatus == OperationalStatus.Up)
-                    .Where(n => !VirtualAdapterFilter.IsVirtual(n))
-                    .OrderByDescending(n => n.NetworkInterfaceType == NetworkInterfaceType.Ethernet)
-                    .ThenByDescending(n => n.NetworkInterfaceType == NetworkInterfaceType.Wireless80211)
-                    .FirstOrDefault();
+                var nics = NetworkInterface.GetAllNetworkInterfaces();
+                NetworkInterface? selected = null;
 
-                if (nic == null) return string.Empty;
-
-                byte[] bytes = nic.GetPhysicalAddress().GetAddressBytes();
-                if (bytes == null || bytes.Length == 0) return string.Empty;
-
-                var sb = new StringBuilder();
-                for (int i = 0; i < bytes.Length; i++)
+                if (!string.IsNullOrWhiteSpace(preferredInterfaceName))
                 {
-                    sb.Append(bytes[i].ToString("X2"));
-                    if (i < bytes.Length - 1 && !string.IsNullOrEmpty(separator))
+                    foreach (var nic in nics)
                     {
-                        sb.Append(separator);
+                        if ((nic.Name.IndexOf(preferredInterfaceName, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                             nic.Description.IndexOf(preferredInterfaceName, StringComparison.OrdinalIgnoreCase) >= 0) &&
+                            !VirtualAdapterFilter.IsVirtual(nic))
+                        {
+                            selected = nic;
+                            break;
+                        }
                     }
                 }
-                return sb.ToString();
+
+                if (selected == null)
+                {
+                    int bestScore = -1;
+                    foreach (var nic in nics)
+                    {
+                        if (nic.OperationalStatus != OperationalStatus.Up || VirtualAdapterFilter.IsVirtual(nic))
+                            continue;
+
+                        int score = 0;
+                        if (nic.NetworkInterfaceType == NetworkInterfaceType.Ethernet) score += 20;
+                        else if (nic.NetworkInterfaceType == NetworkInterfaceType.Wireless80211) score += 10;
+
+                        if (score > bestScore)
+                        {
+                            bestScore = score;
+                            selected = nic;
+                        }
+                    }
+                }
+
+                if (selected == null) return string.Empty;
+
+                byte[] bytes = selected.GetPhysicalAddress().GetAddressBytes();
+                if (bytes == null || bytes.Length < 6) return string.Empty;
+
+                var mac = new MacAddress(bytes);
+                return mac.ToString(separator);
             }
             catch
             {
                 return string.Empty;
             }
+        }
+
+        /// <summary>
+        /// Gets the primary local IPv4 Subnet (<see cref="IPNetwork"/>).
+        /// </summary>
+        public static IPNetwork? GetPrimarySubnet()
+        {
+            try
+            {
+                string localIp = GetLocalIPv4();
+                if (localIp == LoopbackIPv4) return null;
+
+                var adapters = GetAdapters(operationalOnly: true, excludeVirtual: true);
+                foreach (var adapter in adapters)
+                {
+                    if (adapter.IPv4Addresses.Contains(localIp) && !string.IsNullOrEmpty(adapter.SubnetMask))
+                    {
+                        if (IPAddress.TryParse(localIp, out var ip) && IPAddress.TryParse(adapter.SubnetMask, out var mask))
+                        {
+                            return new IPNetwork(ip, mask);
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // Ignore
+            }
+
+            return null;
         }
 
         /// <summary>
@@ -154,15 +241,16 @@ namespace ZeroNetwork.Discovery
             var result = new List<NetworkAdapterInfo>();
             try
             {
-                var nics = NetworkInterface.GetAllNetworkInterfaces().AsEnumerable();
+                var nics = NetworkInterface.GetAllNetworkInterfaces();
 
-                if (operationalOnly)
+                for (int i = 0; i < nics.Length; i++)
                 {
-                    nics = nics.Where(n => n.OperationalStatus == OperationalStatus.Up);
-                }
+                    var nic = nics[i];
+                    if (operationalOnly && nic.OperationalStatus != OperationalStatus.Up)
+                    {
+                        continue;
+                    }
 
-                foreach (var nic in nics)
-                {
                     bool isVirtual = VirtualAdapterFilter.IsVirtual(nic);
                     if (excludeVirtual && isVirtual) continue;
 
@@ -174,14 +262,16 @@ namespace ZeroNetwork.Discovery
                         InterfaceType = nic.NetworkInterfaceType,
                         Status = nic.OperationalStatus,
                         Speed = nic.Speed,
+                        SupportsMulticast = nic.SupportsMulticast,
                         IsVirtual = isVirtual
                     };
 
                     byte[] macBytes = nic.GetPhysicalAddress().GetAddressBytes();
-                    if (macBytes != null && macBytes.Length > 0)
+                    if (macBytes != null && macBytes.Length >= 6)
                     {
-                        info.RawMacAddress = string.Concat(macBytes.Select(b => b.ToString("X2")));
-                        info.MacAddress = string.Join("-", macBytes.Select(b => b.ToString("X2")));
+                        var mac = new MacAddress(macBytes);
+                        info.RawMacAddress = mac.ToString(string.Empty);
+                        info.MacAddress = mac.ToString("-");
                     }
 
                     try
@@ -191,7 +281,20 @@ namespace ZeroNetwork.Discovery
                         {
                             if (addr.Address.AddressFamily == AddressFamily.InterNetwork)
                             {
-                                info.IPv4Addresses.Add(addr.Address.ToString());
+                                string ipStr = addr.Address.ToString();
+                                info.IPv4Addresses.Add(ipStr);
+
+                                if (addr.IPv4Mask != null && string.IsNullOrEmpty(info.SubnetMask))
+                                {
+                                    info.SubnetMask = addr.IPv4Mask.ToString();
+                                    try
+                                    {
+                                        var net = new IPNetwork(addr.Address, addr.IPv4Mask);
+                                        info.CidrPrefix = net.CidrPrefix;
+                                        info.BroadcastAddress = net.BroadcastAddress.ToString();
+                                    }
+                                    catch { }
+                                }
                             }
                             else if (addr.Address.AddressFamily == AddressFamily.InterNetworkV6)
                             {
@@ -210,6 +313,17 @@ namespace ZeroNetwork.Discovery
                         foreach (var dns in ipProps.DnsAddresses)
                         {
                             info.DnsAddresses.Add(dns.ToString());
+                        }
+
+                        if (ipProps.DhcpServerAddresses != null)
+                        {
+                            foreach (var dhcp in ipProps.DhcpServerAddresses)
+                            {
+                                if (dhcp != null && !string.IsNullOrEmpty(dhcp.ToString()))
+                                {
+                                    info.DhcpServers.Add(dhcp.ToString());
+                                }
+                            }
                         }
                     }
                     catch

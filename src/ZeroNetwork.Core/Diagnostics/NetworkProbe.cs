@@ -1,4 +1,5 @@
 using System;
+using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Threading;
@@ -29,54 +30,91 @@ namespace ZeroNetwork.Diagnostics
     }
 
     /// <summary>
-    /// High-performance network connectivity diagnostics and probing tools.
+    /// High-performance, hardened network connectivity diagnostics and probing tools.
+    /// Eliminates socket handle leaks and guarantees non-blocking execution across UI and background threads.
     /// </summary>
     public static class NetworkProbe
     {
+        private static readonly byte[] DefaultPingBuffer = new byte[32];
+
         /// <summary>
         /// Asynchronously tests whether a specific TCP host and port is accepting connections within the specified timeout.
-        /// Guaranteed non-blocking and safe for UI threads.
+        /// Aborts socket immediately on timeout or cancellation, preventing background thread-pool socket leaks.
         /// </summary>
         /// <param name="host">Target IP or hostname.</param>
         /// <param name="port">Target TCP port.</param>
         /// <param name="timeoutMs">Timeout in milliseconds (default: 1000ms).</param>
+        /// <param name="cancellationToken">Optional cancellation token.</param>
         /// <returns>True if connection succeeded; otherwise false.</returns>
-        public static async Task<bool> IsPortOpenAsync(string host, int port, int timeoutMs = 1000)
+        public static async Task<bool> IsPortOpenAsync(
+            string host, 
+            int port, 
+            int timeoutMs = 1000, 
+            CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(host) || port <= 0 || port > 65535)
                 return false;
 
+            Socket? socket = null;
+            CancellationTokenSource? linkedCts = null;
             try
             {
-                using (var client = new TcpClient())
+                socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp)
                 {
-                    var connectTask = client.ConnectAsync(host, port);
-                    var timeoutTask = Task.Delay(timeoutMs);
+                    Blocking = false,
+                    NoDelay = true
+                };
 
-                    var completedTask = await Task.WhenAny(connectTask, timeoutTask).ConfigureAwait(false);
-                    if (completedTask == connectTask)
-                    {
-                        // Check if an exception occurred during connection
-                        await connectTask.ConfigureAwait(false);
-                        return client.Connected;
-                    }
+                linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                linkedCts.CancelAfter(Math.Max(10, timeoutMs));
 
-                    return false;
+                // Register socket close on cancellation to abort any pending connect
+                using (linkedCts.Token.Register(() =>
+                {
+                    try { socket?.Close(); } catch { }
+                }))
+                {
+                    var connectTask = Task.Factory.FromAsync(
+                        socket.BeginConnect,
+                        socket.EndConnect,
+                        host,
+                        port,
+                        null);
+
+                    await connectTask.ConfigureAwait(false);
+                    return socket.Connected;
                 }
             }
             catch
             {
                 return false;
             }
+            finally
+            {
+                linkedCts?.Dispose();
+                if (socket != null)
+                {
+                    try { socket.Close(); } catch { }
+                    socket.Dispose();
+                }
+            }
         }
 
         /// <summary>
-        /// Asynchronously sends an ICMP echo ping to the specified host.
+        /// Asynchronously sends an ICMP echo ping to the specified host with optional TTL and fragmentation options.
         /// </summary>
         /// <param name="host">Target IP or hostname.</param>
         /// <param name="timeoutMs">Timeout in milliseconds (default: 1000ms).</param>
+        /// <param name="ttl">Time to live hop count (default: 64).</param>
+        /// <param name="dontFragment">Don't fragment flag for Path MTU tests.</param>
+        /// <param name="buffer">Custom buffer payload or null for default 32-byte payload.</param>
         /// <returns>PingProbeResult containing roundtrip time and status.</returns>
-        public static async Task<PingProbeResult> PingAsync(string host, int timeoutMs = 1000)
+        public static async Task<PingProbeResult> PingAsync(
+            string host,
+            int timeoutMs = 1000,
+            int ttl = 64,
+            bool dontFragment = false,
+            byte[]? buffer = null)
         {
             if (string.IsNullOrWhiteSpace(host))
                 return PingProbeResult.Failed(address: host);
@@ -85,7 +123,10 @@ namespace ZeroNetwork.Diagnostics
             {
                 using (var ping = new Ping())
                 {
-                    var reply = await ping.SendPingAsync(host, timeoutMs).ConfigureAwait(false);
+                    var options = new PingOptions(Math.Max(1, Math.Min(255, ttl)), dontFragment);
+                    byte[] sendBuffer = buffer ?? DefaultPingBuffer;
+
+                    var reply = await ping.SendPingAsync(host, timeoutMs, sendBuffer, options).ConfigureAwait(false);
                     if (reply != null && reply.Status == IPStatus.Success)
                     {
                         return new PingProbeResult(
@@ -95,7 +136,7 @@ namespace ZeroNetwork.Diagnostics
                             reply.Address?.ToString() ?? host);
                     }
 
-                    return PingProbeResult.Failed(reply?.Status ?? IPStatus.Unknown, host);
+                    return PingProbeResult.Failed(reply?.Status ?? IPStatus.Unknown, reply?.Address?.ToString() ?? host);
                 }
             }
             catch
