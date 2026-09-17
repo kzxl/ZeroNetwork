@@ -28,7 +28,9 @@ High-performance, zero-dependency cross-platform network infrastructure, topolog
 - **`PathMtuDiscovery`**: Binary search PMTU discovery with Don't Fragment (DF) ICMP packets (validating Jumbo Frames MTU 9000 for GigE Vision cameras).
 - **`ConnectivityHeartbeat`**: Active multi-target WAN/LAN reachability monitor.
 
-### 4. Sockets & Embedded Micro-Services
+### 4. Sockets, Micro-Services & High-Performance HTTP Client
+- **`ZeroApiClient`**: Ultra-high-throughput stream-based HTTP API Client. Eliminates LOH fragmentation via direct stream serialization/deserialization, automatic GZip/Brotli socket decompression, pooled connection lifetime management, and exponential backoff retry.
+- **`ZeroHttpExtensions`**: Fluent string extensions (`url.GetJsonAsync<T>()`, `url.PostJsonAsync<T>()`) providing zero-allocation drop-in replacements for legacy HTTP extensions.
 - **`UdpMulticastClient`**: IGMPv2/v3 multicast group publisher/subscriber with physical interface binding.
 - **`ZeroHttpServer`**: Sovereign, non-admin pure C# micro HTTP/1.1 server for Edge REST APIs and built-in Prometheus `/metrics` telemetry.
 
