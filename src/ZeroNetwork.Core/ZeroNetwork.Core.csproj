@@ -6,6 +6,9 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>ZeroNetwork.Core</AssemblyName>
     <RootNamespace>ZeroNetwork</RootNamespace>
+    <PackageId>ZeroNetwork.Core</PackageId>
+    <Description>High-performance, zero-dependency .NET networking suite: IP/CIDR math, active ARP scanner, WoL, UDP multicast, micro HTTP/1.1 server with REST router and Prometheus metrics, streaming REST client, WebSocket client (RFC 6455), and pure C# SignalR Hub client.</Description>
+    <PackageTags>network;zeronetwork;ip;cidr;arp;wol;wake-on-lan;multicast;udp;http;rest;websocket;signalr;realtime;iot;scada;zero-dependency;zeroplatform</PackageTags>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);CS1591;CA1416</NoWarn>
   </PropertyGroup>

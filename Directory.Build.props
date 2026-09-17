@@ -1,12 +1,12 @@
 <Project>
   <PropertyGroup>
-    <Version>2.1.0</Version>
-    <AssemblyVersion>2.1.0.0</AssemblyVersion>
-    <FileVersion>2.1.0.0</FileVersion>
-    <InformationalVersion>2.1.0</InformationalVersion>
-    <Authors>Phong Võ</Authors>
-    <Company>ZeroPlatform</Company>
-    <Copyright>Copyright © 2026 Phong Võ</Copyright>
+    <Version>2.2.0</Version>
+    <AssemblyVersion>2.2.0.0</AssemblyVersion>
+    <FileVersion>2.2.0.0</FileVersion>
+    <InformationalVersion>2.2.0</InformationalVersion>
+    <Authors>Phong Võ (kzxl)</Authors>
+    <Company>ZeroUniverse</Company>
+    <Copyright>Copyright © 2026 Phong Võ (kzxl)</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/kzxl/ZeroNetwork</PackageProjectUrl>
     <RepositoryUrl>https://github.com/kzxl/ZeroNetwork.git</RepositoryUrl>

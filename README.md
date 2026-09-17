@@ -34,6 +34,10 @@ High-performance, zero-dependency cross-platform network infrastructure, topolog
 - **`UdpMulticastClient`**: IGMPv2/v3 multicast group publisher/subscriber with physical interface binding.
 - **`ZeroHttpServer`**: Sovereign, non-admin pure C# micro HTTP/1.1 server for Edge REST APIs and built-in Prometheus `/metrics` telemetry.
 
+### 5. Real-Time Full-Duplex Protocols (Zero Dependency)
+- **`ZeroWebSocketClient`**: Resilient RFC 6455 WebSocket client built on BCL `ClientWebSocket` with thread-safe sending (`SemaphoreSlim`), automatic frame reassembly for large payloads, configurable keep-alive heartbeat, and auto-reconnect with exponential backoff and random jitter.
+- **`ZeroSignalRClient`**: Pure C# ASP.NET Core SignalR JSON Hub Client (Protocol v1) with **0 external dependencies**, eliminating assembly redirect issues and DLL hell on .NET Framework 4.6.2. Supports automatic handshake, server-to-client callbacks (`hub.On<T>`), and request-response invocations (`hub.InvokeAsync<T>`).
+
 ---
 
 ## 💻 Supported Platforms
