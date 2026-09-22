@@ -1,5 +1,6 @@
 # ZeroNetwork
 
+[![ZeroPlatform Tier](https://img.shields.io/badge/ZeroPlatform-Tier%202%20(Transport%20%26%20Storage)-059669.svg)](https://github.com/kzxl/ZeroPlatform)
 [![NuGet Version](https://img.shields.io/badge/nuget-v2.2.0-blue.svg)](https://www.nuget.org/packages/ZeroNetwork.Core/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Zero External Dependencies](https://img.shields.io/badge/Dependencies-0%20(Pure%20C%23)-brightgreen.svg)]()
