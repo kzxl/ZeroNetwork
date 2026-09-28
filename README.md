@@ -1,15 +1,15 @@
 # ZeroNetwork
 
 [![ZeroPlatform Tier](https://img.shields.io/badge/ZeroPlatform-Tier%202%20(Transport%20%26%20Storage)-059669.svg)](https://github.com/kzxl/ZeroPlatform)
-[![NuGet Version](https://img.shields.io/badge/nuget-v2.2.0-blue.svg)](https://www.nuget.org/packages/ZeroNetwork.Core/)
+[![NuGet Version](https://img.shields.io/badge/nuget-v2.4.0-blue.svg)](https://www.nuget.org/packages/ZeroNetwork.Core/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Zero External Dependencies](https://img.shields.io/badge/Dependencies-0%20(Pure%20C%23)-brightgreen.svg)]()
-[![Tests: 31 Passed](https://img.shields.io/badge/Tests-31%20Passed%20(100%25)-brightgreen.svg)]()
+[![Tests: 58 Passed](https://img.shields.io/badge/Tests-58%20Passed%20(100%25)-brightgreen.svg)]()
 [![Multi-Targeting](https://img.shields.io/badge/.NET-8.0%20%7C%204.6.2%20%7C%20Standard%202.0-orange.svg)]()
 
 > **Architectural Standard**: 100% Pure C# BCL, Zero External Dependencies, Multi-Targeting across `.NET 8.0`, `.NET Framework 4.6.2`, and `.NET Standard 2.0`.
 
-`ZeroNetwork` is an ultra-high-performance, sovereign .NET networking suite engineered for factory floor automation, IoT edge gateways, distributed industrial systems, and high-load ERP infrastructures. It provides an end-to-end networking stack from **Layer 2 (Data Link & Hardware)** all the way up to **Layer 7 (HTTP REST & Real-Time SignalR/WebSocket)** with **ZERO external NuGet dependencies**, eliminating assembly conflicts and DLL hell on legacy .NET Framework runtimes while maximizing throughput on modern .NET 8+.
+`ZeroNetwork` is an ultra-high-performance, sovereign .NET networking suite engineered for factory floor automation, IoT edge gateways, distributed industrial systems, and high-load ERP infrastructures. It provides an end-to-end networking stack from **Layer 2 (Data Link & Hardware)** all the way up to **Layer 7 (HTTP REST, Real-Time SignalR/WebSocket, and High-Throughput Pub/Sub Bus)** with **ZERO external NuGet dependencies**, eliminating assembly conflicts and DLL hell on legacy .NET Framework runtimes while maximizing throughput on modern .NET 8+.
 
 ---
 
@@ -21,7 +21,13 @@
 ├───────────────────┬──────────────────────────────────┬──────────────────────────┤
 │ OSI Layer         │ Component                        │ Key Highlights           │
 ├───────────────────┼──────────────────────────────────┼──────────────────────────┤
-│ Layer 7: RealTime │ ZeroSignalRClient                │ Pure C# Hub Protocol v1  │
+│ Layer 7: Pub/Sub  │ InProcessZeroBus & TopicTrie     │ Wildcards (+, #), Zero-GC│
+│                   │ IpcZeroBus                       │ Microsecond Shared Memory│
+│                   │ ZeroPubSubHub                    │ Remote WebSocket Bridge  │
+├───────────────────┼──────────────────────────────────┼──────────────────────────┤
+│ Layer 7: RealTime │ ZeroHubServer<THub> & ZeroHub    │ Pure C# Hub Protocol v1  │
+│                   │ ZeroSignalRClient                │ Pure C# Hub Client       │
+│                   │ ZeroWebSocketServer              │ RFC 6455 Socket Server   │
 │                   │ ZeroWebSocketClient              │ RFC 6455, Auto-Reconnect │
 ├───────────────────┼──────────────────────────────────┼──────────────────────────┤
 │ Layer 7: HTTP     │ ZeroApiClient & Extensions       │ Zero-LOH Stream Pipeline │
@@ -70,9 +76,19 @@
 - **`ZeroApiClient`**: High-performance HTTP client utilizing stream-based direct JSON serialization (`IZeroJsonSerializer`) to eliminate Large Object Heap (LOH) allocations, combined with connection pooling and exponential backoff retry.
 - **`ZeroHttpExtensions`**: Fluent string extensions (`url.GetJsonAsync<T>()`, `url.PostJsonAsync<T>()`) for clean, allocation-efficient HTTP consumption.
 
-### 5. Layer 7: Real-Time Full-Duplex (WebSocket & SignalR)
+### 5. Layer 7: Real-Time Full-Duplex (WebSocket & SignalR Server/Client)
+- **`ZeroWebSocketServer`**: Pure C# BCL socket listener implementing the RFC 6455 WebSocket Server specification without administrative URL ACL privileges. Features automatic `Sec-WebSocket-Accept` handshake hashing, client-to-server frame unmasking, and high-performance text/binary broadcasting.
+- **`ZeroWebSocketSession`**: Thread-safe per-client WebSocket session abstraction managing state, frame reassembly, and keep-alive ping/pong frames.
+- **`ZeroHubServer<THub>`**: Sovereign, self-hosted ASP.NET Core SignalR Protocol v1 Hub Server. Features automatic JSON protocol handshake (`{"protocol":"json","version":1}\x1e`), typed RPC method dispatching with return value completions (`type: 3`), dynamic group management (`AddToGroupAsync`), client proxy routing (`All`, `Caller`, `Others`, `Client`, `Group`), and 15-second heartbeat ping.
+- **`ZeroHub`**: Base class for enterprise business hubs providing `Clients`, `Context`, and `Groups`.
 - **`ZeroWebSocketClient`**: Resilient RFC 6455 WebSocket client built purely on BCL `ClientWebSocket`. Includes thread-safe frame sending (`SemaphoreSlim`), automatic message reassembly for large payloads, configurable keep-alive heartbeat, and auto-reconnect with exponential backoff and random jitter.
 - **`ZeroSignalRClient`**: Pure C# ASP.NET Core SignalR JSON Hub Client (Protocol v1) with **0 external dependencies** (no `Microsoft.AspNetCore.SignalR.Client` bloat, eliminating DLL conflicts on .NET Framework 4.6.2). Supports automatic handshake, server-to-client callbacks (`hub.On<T>`), client invocations (`hub.SendAsync`, `hub.InvokeAsync<T>`), and keep-alive ping management.
+
+### 6. Layer 7: High-Throughput Pub/Sub & Inter-Process Messaging
+- **`InProcessZeroBus`**: Ultra-fast, zero-allocation in-process message bus. Supports both strongly-typed events (`PublishAsync<T>`) and topic patterns with zero GC pressure on hot paths.
+- **`TopicTrie`**: Thread-safe radix trie supporting MQTT-style wildcards (`+` for single level, `#` for multi-level) with Copy-On-Write subscriber collections for completely lock-free read dispatching.
+- **`IpcZeroBus`**: Sub-microsecond cross-process Pub/Sub utilizing OS shared memory (`ZeroMmfRingBuffer`). Allows decoupled processes (e.g. C# SCADA and Python/C++ Vision/AI) to exchange frames and telemetry at hardware speed without socket overhead.
+- **`ZeroPubSubHub`**: Out-of-the-box SignalR Hub bridging remote clients to the local `InProcessZeroBus`, enabling web browsers and remote desktop nodes to subscribe and publish to topics over WebSockets.
 
 ---
 
@@ -108,29 +124,93 @@ using var client = new ZeroApiClient(new ZeroApiClientOptions
 var response = await client.PostJsonAsync<OrderRequest, OrderResult>("/orders", new OrderRequest { OrderId = 1001 });
 ```
 
-### 3. Pure C# SignalR Hub Client (0 External Dependencies)
+### 3. Self-Hosted SignalR Hub Server with RPC & Groups
 ```csharp
 using ZeroNetwork.RealTime;
 
-using var hub = new ZeroSignalRClient("ws://erp-server:5000/hub/inventory");
+// 1. Declare business hub
+public class TelemetryHub : ZeroHub
+{
+    public async Task BroadcastAlarm(string machineId, string alert)
+    {
+        // Broadcast to all connected clients
+        await Clients.All.SendAsync("OnAlarm", machineId, alert);
+    }
+
+    public int ComputeThroughput(int unitsProduced, int rejects)
+    {
+        // Two-way RPC returning calculation result
+        return unitsProduced - rejects;
+    }
+
+    public async Task JoinLine(string lineId)
+    {
+        // Add caller to specific group
+        await Groups.AddToGroupAsync(Context.ConnectionId, lineId);
+    }
+}
+
+// 2. Start sovereign hub server (Port 8080)
+using var server = new ZeroHubServer<TelemetryHub>(port: 8080);
+server.Start();
+```
+
+### 4. Pure C# SignalR Hub Client (0 External Dependencies)
+```csharp
+using ZeroNetwork.RealTime;
+
+using var hub = new ZeroSignalRClient(new ZeroSignalROptions
+{
+    HubUri = new Uri("ws://127.0.0.1:8080/hub/telemetry")
+});
 
 // Register server-to-client event listener
-hub.On<StockUpdateDto>("OnStockChanged", dto =>
+hub.On<string, string>("OnAlarm", (machineId, alert) =>
 {
-    // Instantly update WinForms / WPF UI
-    Console.WriteLine($"[RealTime] SKU {dto.Sku}: {dto.CurrentQty}");
+    Console.WriteLine($"[ALERT] {machineId}: {alert}");
 });
 
 await hub.StartAsync();
 
-// Fire-and-forget invocation
-await hub.SendAsync("JoinWarehouseGroup", "WH-01");
-
-// Request-response invocation
-int pendingCount = await hub.InvokeAsync<int>("GetPendingOrdersCount", "WH-01");
+// Invoke server hub RPC
+int netYield = await hub.InvokeAsync<int>("ComputeThroughput", 1200, 45);
+Console.WriteLine($"Net Yield: {netYield}");
 ```
 
-### 4. Resilient WebSocket Client (Auto-Reconnect & Keep-Alive)
+### 5. High-Performance MQTT-Style In-Process Pub/Sub Bus
+```csharp
+using ZeroNetwork.PubSub;
+
+using var bus = new InProcessZeroBus();
+
+// Subscribe using single-level '+' and multi-level '#' wildcards
+using var sub = bus.SubscribeTopic("plants/+/line1/#", (topic, payload) =>
+{
+    string message = Encoding.UTF8.GetString(payload.ToArray());
+    Console.WriteLine($"[{topic}] -> {message}");
+});
+
+// Publish topic event (zero GC allocation)
+await bus.PublishTopicAsync("plants/hanoi/line1/press/temperature", Encoding.UTF8.GetBytes("78.5 C"));
+```
+
+### 6. Sub-Microsecond Cross-Process (IPC) Shared Memory Bus
+```csharp
+using ZeroNetwork.PubSub;
+
+// Shared memory IPC bus mapped across operating system processes
+using var ipcBus = new IpcZeroBus("ZeroIpc_SCADA_Bus", capacity: 1024, slotSize: 65536, isListener: true);
+
+ipcBus.SubscribeTopic("vision/inspection/+", (topic, data) =>
+{
+    Console.WriteLine($"Received telemetry from external process on {topic} ({data.Length} bytes)");
+});
+
+// Fast publisher from another process
+ipcBus.TryPublish("vision/inspection/cam1", Encoding.UTF8.GetBytes("OK: DefectCount=0"));
+```
+
+### 7. Resilient WebSocket Client (Auto-Reconnect & Keep-Alive)
 ```csharp
 using ZeroNetwork.RealTime;
 
@@ -150,11 +230,11 @@ await ws.ConnectAsync();
 await ws.SendJsonAsync(new { deviceId = "CNC-01", status = "ONLINE" });
 ```
 
-### 5. Micro HTTP Server with Prometheus Metrics
+### 8. Micro HTTP Server with Prometheus Metrics
 ```csharp
 using ZeroNetwork.Http;
 
-using var server = new ZeroHttpServer(port: 9090, ipAddress: "0.0.0.0");
+using var server = new ZeroHttpServer(port: 9090, host: "0.0.0.0");
 
 server.MapGet("/api/status", req => ZeroHttpResponse.Json("{\"status\":\"OK\"}"));
 server.MapPost("/api/trigger", req => ZeroHttpResponse.Text("Triggered: " + req.Body));
