@@ -1,26 +1,131 @@
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 
 namespace ZeroNetwork.PubSub
 {
     /// <summary>
+    /// High-performance, zero-allocation topic tokenizer operating directly on spans.
+    /// Replaces BCL string.Split('/') on hot paths.
+    /// </summary>
+    public ref struct TopicSpanTokenizer
+    {
+        private ReadOnlySpan<char> _remaining;
+
+        /// <summary>
+        /// Initializes a new instance with the specified topic character span.
+        /// </summary>
+        public TopicSpanTokenizer(ReadOnlySpan<char> span)
+        {
+            _remaining = span;
+        }
+
+        /// <summary>
+        /// Attempts to extract the next hierarchical topic segment.
+        /// </summary>
+        /// <param name="segment">Extracted segment span.</param>
+        /// <returns><c>true</c> if a segment was extracted; <c>false</c> if end reached.</returns>
+        public bool TryGetNext(out ReadOnlySpan<char> segment)
+        {
+            if (_remaining.IsEmpty)
+            {
+                segment = default;
+                return false;
+            }
+
+            int slashIndex = _remaining.IndexOf('/');
+            if (slashIndex >= 0)
+            {
+                segment = _remaining.Slice(0, slashIndex);
+                _remaining = _remaining.Slice(slashIndex + 1);
+            }
+            else
+            {
+                segment = _remaining;
+                _remaining = default;
+            }
+            return true;
+        }
+    }
+
+    /// <summary>
     /// Thread-safe Trie data structure for MQTT-style topic routing.
     /// Supports exact matching, single-level wildcards ('+'), and multi-level wildcards ('#').
-    /// Designed with Copy-On-Write subscriber collections for zero-lock read dispatching.
+    /// Optimized with Copy-On-Write flat child arrays and zero-allocation span traversal on hot paths.
     /// </summary>
     /// <typeparam name="TSubscriber">Type of the subscriber token/handler.</typeparam>
     public sealed class TopicTrie<TSubscriber>
     {
         private sealed class TrieNode
         {
-            public readonly ConcurrentDictionary<string, TrieNode> Children = new ConcurrentDictionary<string, TrieNode>(StringComparer.Ordinal);
+            public struct ChildEntry
+            {
+                public string Segment;
+                public TrieNode Node;
+            }
+
+            // Copy-On-Write contiguous array for cache-friendly, lock-free span lookup
+            public volatile ChildEntry[] FlatChildren = Array.Empty<ChildEntry>();
             public TrieNode? SingleWildcardChild; // '+'
             public TrieNode? MultiWildcardChild;  // '#'
 
             // Copy-On-Write array for lock-free read iteration
             public volatile TSubscriber[] Subscribers = Array.Empty<TSubscriber>();
             public readonly object SyncRoot = new object();
+
+            public TrieNode GetOrAddChild(string segment)
+            {
+                lock (SyncRoot)
+                {
+                    for (int i = 0; i < FlatChildren.Length; i++)
+                    {
+                        if (string.Equals(FlatChildren[i].Segment, segment, StringComparison.Ordinal))
+                        {
+                            return FlatChildren[i].Node;
+                        }
+                    }
+
+                    var newNode = new TrieNode();
+                    var list = new List<ChildEntry>(FlatChildren)
+                    {
+                        new ChildEntry { Segment = segment, Node = newNode }
+                    };
+                    FlatChildren = list.ToArray();
+                    return newNode;
+                }
+            }
+
+            public bool TryGetChild(ReadOnlySpan<char> segment, out TrieNode? node)
+            {
+                var children = FlatChildren;
+                for (int i = 0; i < children.Length; i++)
+                {
+                    if (segment.SequenceEqual(children[i].Segment.AsSpan()))
+                    {
+                        node = children[i].Node;
+                        return true;
+                    }
+                }
+                node = null;
+                return false;
+            }
+
+            public bool RemoveChild(string segment)
+            {
+                lock (SyncRoot)
+                {
+                    var list = new List<ChildEntry>(FlatChildren);
+                    for (int i = 0; i < list.Count; i++)
+                    {
+                        if (string.Equals(list[i].Segment, segment, StringComparison.Ordinal))
+                        {
+                            list.RemoveAt(i);
+                            FlatChildren = list.ToArray();
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+            }
         }
 
         private readonly TrieNode _root = new TrieNode();
@@ -73,7 +178,7 @@ namespace ZeroNetwork.PubSub
                 }
                 else
                 {
-                    current = current.Children.GetOrAdd(seg, _ => new TrieNode());
+                    current = current.GetOrAddChild(seg);
                 }
             }
 
@@ -112,7 +217,7 @@ namespace ZeroNetwork.PubSub
                 }
                 else
                 {
-                    if (!current.Children.TryGetValue(seg, out current))
+                    if (!current.TryGetChild(seg.AsSpan(), out current))
                         return false;
                 }
 
@@ -136,6 +241,7 @@ namespace ZeroNetwork.PubSub
 
         /// <summary>
         /// Finds all subscribers whose patterns match the concrete published topic.
+        /// Zero heap allocation on lookup.
         /// </summary>
         /// <param name="topic">Concrete topic, e.g. "sensors/line1/temperature".</param>
         /// <param name="results">List to append matched subscribers into.</param>
@@ -144,11 +250,21 @@ namespace ZeroNetwork.PubSub
             if (string.IsNullOrEmpty(topic) || results == null)
                 return;
 
-            string[] segments = topic.Split('/');
-            CollectMatches(_root, segments, 0, results);
+            GetMatches(topic.AsSpan(), results);
         }
 
-        private static void CollectMatches(TrieNode current, string[] segments, int index, List<TSubscriber> results)
+        /// <summary>
+        /// Finds all subscribers matching the concrete topic span without heap allocations.
+        /// </summary>
+        public void GetMatches(ReadOnlySpan<char> topic, List<TSubscriber> results)
+        {
+            if (topic.IsEmpty || results == null)
+                return;
+
+            CollectMatches(_root, topic, results);
+        }
+
+        private static void CollectMatches(TrieNode current, ReadOnlySpan<char> remainingTopic, List<TSubscriber> results)
         {
             // 1. If this node has a '#' wildcard child, it matches this segment and all subsequent segments
             if (current.MultiWildcardChild != null)
@@ -160,8 +276,8 @@ namespace ZeroNetwork.PubSub
                 }
             }
 
-            // 2. If we reached the end of the topic segments, collect direct subscribers at this node
-            if (index == segments.Length)
+            // 2. If we reached the end of the topic, collect exact subscribers at this node
+            if (remainingTopic.IsEmpty)
             {
                 var exactSubs = current.Subscribers;
                 if (exactSubs.Length > 0)
@@ -171,55 +287,74 @@ namespace ZeroNetwork.PubSub
                 return;
             }
 
-            string seg = segments[index];
+            // Extract next segment using zero-alloc slice
+            int slashIndex = remainingTopic.IndexOf('/');
+            ReadOnlySpan<char> segment;
+            ReadOnlySpan<char> nextRemaining;
 
-            // 3. Exact literal segment match
-            if (current.Children.TryGetValue(seg, out var literalChild))
+            if (slashIndex >= 0)
             {
-                CollectMatches(literalChild, segments, index + 1, results);
+                segment = remainingTopic.Slice(0, slashIndex);
+                nextRemaining = remainingTopic.Slice(slashIndex + 1);
+            }
+            else
+            {
+                segment = remainingTopic;
+                nextRemaining = default;
+            }
+
+            // 3. Exact literal segment match via flat child array (zero-alloc SequenceEqual)
+            if (current.TryGetChild(segment, out var literalChild) && literalChild != null)
+            {
+                CollectMatches(literalChild, nextRemaining, results);
             }
 
             // 4. Single-level '+' wildcard match (matches exactly 1 segment)
             if (current.SingleWildcardChild != null)
             {
-                CollectMatches(current.SingleWildcardChild, segments, index + 1, results);
+                CollectMatches(current.SingleWildcardChild, nextRemaining, results);
             }
         }
 
         /// <summary>
-        /// Tests if a topic pattern matches a concrete topic.
+        /// Tests if a topic pattern matches a concrete topic without heap allocation.
         /// </summary>
         public static bool IsMatch(string pattern, string topic)
         {
             if (string.IsNullOrEmpty(pattern) || string.IsNullOrEmpty(topic))
                 return false;
 
-            string[] pSegs = pattern.Split('/');
-            string[] tSegs = topic.Split('/');
+            return IsMatch(pattern.AsSpan(), topic.AsSpan());
+        }
 
-            int pi = 0;
-            int ti = 0;
+        /// <summary>
+        /// Tests if a topic pattern span matches a concrete topic span without heap allocation.
+        /// </summary>
+        public static bool IsMatch(ReadOnlySpan<char> pattern, ReadOnlySpan<char> topic)
+        {
+            var pTok = new TopicSpanTokenizer(pattern);
+            var tTok = new TopicSpanTokenizer(topic);
 
-            while (pi < pSegs.Length && ti < tSegs.Length)
+            while (pTok.TryGetNext(out var pSeg))
             {
-                if (pSegs[pi] == "#")
+                if (pSeg.Length == 1 && pSeg[0] == '#')
                 {
                     return true; // '#' at end matches everything remaining
                 }
 
-                if (pSegs[pi] != "+" && !string.Equals(pSegs[pi], tSegs[ti], StringComparison.Ordinal))
+                if (!tTok.TryGetNext(out var tSeg))
+                {
+                    return false; // Topic ended prematurely
+                }
+
+                if (!(pSeg.Length == 1 && pSeg[0] == '+') && !pSeg.SequenceEqual(tSeg))
                 {
                     return false;
                 }
-
-                pi++;
-                ti++;
             }
 
-            if (pi < pSegs.Length && pSegs[pi] == "#")
-                return true;
-
-            return pi == pSegs.Length && ti == tSegs.Length;
+            // Both must be exhausted (unless pattern ended with '#')
+            return !tTok.TryGetNext(out _);
         }
 
         private static void ValidatePattern(string[] segments)
