@@ -304,7 +304,10 @@ namespace ZeroNetwork.Http
 
             sb.Append("# HELP dotnet_total_memory_bytes Total GC managed memory allocated.\n");
             sb.Append("# TYPE dotnet_total_memory_bytes gauge\n");
-            sb.Append($"dotnet_total_memory_bytes {memoryBytes}\n");
+            sb.Append($"dotnet_total_memory_bytes {memoryBytes}\n\n");
+
+            // Export all registered custom ZeroTelemetry metrics
+            ZeroNetwork.Diagnostics.ZeroTelemetry.ExportPrometheus(sb);
 
             return ZeroHttpResponse.Text(sb.ToString(), "text/plain; version=0.0.4; charset=utf-8");
         }
