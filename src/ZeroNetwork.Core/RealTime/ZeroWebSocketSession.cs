@@ -22,6 +22,7 @@ namespace ZeroNetwork.RealTime
         private readonly NetworkStream _stream;
         private readonly SemaphoreSlim _sendLock = new SemaphoreSlim(1, 1);
         private readonly CancellationTokenSource _cts = new CancellationTokenSource();
+        private readonly byte[] _maskBuffer = new byte[4];
         private int _disposed;
         private bool _isClosed;
 
@@ -88,13 +89,8 @@ namespace ZeroNetwork.RealTime
                 if (string.IsNullOrEmpty(secKey))
                     return false;
 
-                // Compute Sec-WebSocket-Accept
-                string acceptKey;
-                using (var sha1 = SHA1.Create())
-                {
-                    byte[] hash = sha1.ComputeHash(Encoding.UTF8.GetBytes(secKey + WebSocketGuid));
-                    acceptKey = Convert.ToBase64String(hash);
-                }
+                // Compute Sec-WebSocket-Accept with zero-allocation ZeroSha1
+                string acceptKey = ZeroSha1.ComputeWebSocketAccept(secKey!);
 
                 string response = "HTTP/1.1 101 Switching Protocols\r\n" +
                                   "Upgrade: websocket\r\n" +
@@ -152,10 +148,9 @@ namespace ZeroNetwork.RealTime
                     }
 
                     // Client frames MUST be masked
-                    byte[] maskKey = new byte[4];
                     if (masked)
                     {
-                        if (!await ReadExactAsync(_stream, maskKey, 0, 4, token).ConfigureAwait(false))
+                        if (!await ReadExactAsync(_stream, _maskBuffer, 0, 4, token).ConfigureAwait(false))
                             break;
                     }
 
@@ -170,10 +165,7 @@ namespace ZeroNetwork.RealTime
 
                         if (masked)
                         {
-                            for (int i = 0; i < payload.Length; i++)
-                            {
-                                payload[i] = (byte)(payload[i] ^ maskKey[i % 4]);
-                            }
+                            ZeroFastMask.ApplyMask(payload, _maskBuffer);
                         }
                     }
 
