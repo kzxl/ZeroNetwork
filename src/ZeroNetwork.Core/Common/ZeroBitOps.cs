@@ -224,5 +224,29 @@ namespace ZeroNetwork.Common
             return (value >> offset) | (value << (32 - offset));
 #endif
         }
+
+        /// <summary>
+        /// Rotates the specified 64-bit unsigned integer left by the specified number of bits.
+        /// </summary>
+        public static ulong RotateLeft(ulong value, int offset)
+        {
+#if NET8_0_OR_GREATER
+            return BitOperations.RotateLeft(value, offset);
+#else
+            return (value << offset) | (value >> (64 - offset));
+#endif
+        }
+
+        /// <summary>
+        /// Rotates the specified 64-bit unsigned integer right by the specified number of bits.
+        /// </summary>
+        public static ulong RotateRight(ulong value, int offset)
+        {
+#if NET8_0_OR_GREATER
+            return BitOperations.RotateRight(value, offset);
+#else
+            return (value >> offset) | (value << (64 - offset));
+#endif
+        }
     }
 }
