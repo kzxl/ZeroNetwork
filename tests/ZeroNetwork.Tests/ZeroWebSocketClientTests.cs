@@ -148,6 +148,75 @@ namespace ZeroNetwork.Tests
             }
         }
 
+        [Fact]
+        public async Task WebSocketServer_DirectClientConnectionAndBroadcast_Succeeds()
+        {
+            int port = GetFreePort();
+
+            using (var server = new ZeroWebSocketServer(port, "127.0.0.1"))
+            {
+                var serverReceivedTcs = new TaskCompletionSource<string>();
+                server.SessionConnected += session =>
+                {
+                    session.TextReceived += (s, msg) =>
+                    {
+                        serverReceivedTcs.TrySetResult(msg);
+                        // Echo response
+                        _ = s.SendTextAsync($"Echo:{msg}");
+                    };
+                };
+
+                server.Start();
+                Assert.True(server.IsRunning);
+
+                string wsUri = $"ws://127.0.0.1:{port}/";
+                var options = new ZeroWebSocketOptions
+                {
+                    ServerUri = new Uri(wsUri),
+                    ConnectTimeout = TimeSpan.FromSeconds(5),
+                    AutoReconnect = false
+                };
+
+                using (var client = new ZeroWebSocketClient(options))
+                {
+                    var clientReceivedTcs = new TaskCompletionSource<string>();
+                    client.MessageReceived += msg => clientReceivedTcs.TrySetResult(msg);
+
+                    await client.ConnectAsync();
+                    Assert.True(client.IsConnected);
+                    Assert.Equal(1, server.ActiveSessionCount);
+
+                    await client.SendTextAsync("HelloPureCSharpServer");
+
+                    var completedServer = await Task.WhenAny(serverReceivedTcs.Task, Task.Delay(3000));
+                    Assert.Same(serverReceivedTcs.Task, completedServer);
+                    Assert.Equal("HelloPureCSharpServer", await serverReceivedTcs.Task);
+
+                    var completedClient = await Task.WhenAny(clientReceivedTcs.Task, Task.Delay(3000));
+                    Assert.Same(clientReceivedTcs.Task, completedClient);
+                    Assert.Equal("Echo:HelloPureCSharpServer", await clientReceivedTcs.Task);
+
+                    // Test Broadcast
+                    var broadcastTcs = new TaskCompletionSource<string>();
+                    client.MessageReceived += msg =>
+                    {
+                        if (msg.StartsWith("Broadcast:"))
+                            broadcastTcs.TrySetResult(msg);
+                    };
+
+                    await server.BroadcastTextAsync("Broadcast:AllUnitsActive");
+                    var completedBroadcast = await Task.WhenAny(broadcastTcs.Task, Task.Delay(3000));
+                    Assert.Same(broadcastTcs.Task, completedBroadcast);
+                    Assert.Equal("Broadcast:AllUnitsActive", await broadcastTcs.Task);
+
+                    await client.CloseAsync();
+                }
+
+                server.Stop();
+                Assert.False(server.IsRunning);
+            }
+        }
+
         private class TestSensorDto
         {
             public string SensorId { get; set; } = "";
