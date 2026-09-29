@@ -1,15 +1,15 @@
 # ZeroNetwork
 
 [![ZeroPlatform Tier](https://img.shields.io/badge/ZeroPlatform-Tier%202%20(Transport%20%26%20Storage)-059669.svg)](https://github.com/kzxl/ZeroPlatform)
-[![NuGet Version](https://img.shields.io/badge/nuget-v2.4.0-blue.svg)](https://www.nuget.org/packages/ZeroNetwork.Core/)
+[![NuGet Version](https://img.shields.io/badge/nuget-v2.6.0-blue.svg)](https://www.nuget.org/packages/ZeroNetwork.Core/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Zero External Dependencies](https://img.shields.io/badge/Dependencies-0%20(Pure%20C%23)-brightgreen.svg)]()
-[![Tests: 115 Passed](https://img.shields.io/badge/Tests-115%20Passed%20(100%25)-brightgreen.svg)]()
+[![Tests: 123 Passed](https://img.shields.io/badge/Tests-123%20Passed%20(100%25)-brightgreen.svg)]()
 [![Multi-Targeting](https://img.shields.io/badge/.NET-8.0%20%7C%204.6.2%20%7C%20Standard%202.0-orange.svg)]()
 
 > **Architectural Standard**: 100% Pure C# BCL, Zero External Dependencies, Multi-Targeting across `.NET 8.0`, `.NET Framework 4.6.2`, and `.NET Standard 2.0`.
 
-`ZeroNetwork` is an ultra-high-performance, sovereign .NET networking suite engineered for factory floor automation, IoT edge gateways, distributed industrial systems, and high-load ERP infrastructures. It provides an end-to-end networking stack from **Layer 2 (Data Link & Hardware)** all the way up to **Layer 7 (HTTP REST, Real-Time SignalR/WebSocket, and High-Throughput Pub/Sub Bus)** with **ZERO external NuGet dependencies**, eliminating assembly conflicts and DLL hell on legacy .NET Framework runtimes while maximizing throughput on modern .NET 8+.
+`ZeroNetwork` is an ultra-high-performance, sovereign .NET networking suite engineered for factory floor automation, IoT edge gateways, distributed industrial systems, and high-load ERP infrastructures. It provides an end-to-end networking stack from **Layer 2 (Data Link & Hardware)** all the way up to **Layer 7 (HTTP REST, Real-Time SignalR/WebSocket, Binary RPC, and High-Throughput Pub/Sub Bus)** with **ZERO external NuGet dependencies**, eliminating assembly conflicts and DLL hell on legacy .NET Framework runtimes while maximizing throughput on modern .NET 8+.
 
 ---
 
@@ -20,6 +20,8 @@
 │                               ZeroNetwork Architecture                          │
 ├───────────────────┬──────────────────────────────────┬──────────────────────────┤
 │ OSI Layer         │ Component                        │ Key Highlights           │
+├───────────────────┼──────────────────────────────────┼──────────────────────────┤
+│ Layer 7: RPC      │ ZeroRpcServer & ZeroRpcClient    │ 32-B Framing, FastUlid   │
 ├───────────────────┼──────────────────────────────────┼──────────────────────────┤
 │ Layer 7: Pub/Sub  │ InProcessZeroBus & TopicTrie     │ Wildcards (+, #), Zero-GC│
 │                   │ IpcZeroBus                       │ Microsecond Shared Memory│
@@ -98,6 +100,12 @@
 - **`ZeroRecyclableStream`**: Recyclable pooled memory stream backed by rented `ArrayPool` chunks, eliminating Large Object Heap (LOH) fragmentation.
 - **`ZeroStateMachine<TState, TTrigger>`**: Deterministic, zero-allocation finite state machine for factory sequence automation with sub-5ns state transitions and audit logging.
 - **`ZeroTelemetry`**: Autonomous metrics registry with atomic Counters, Gauges, and HDR Histograms (p50, p90, p99, p99.9), integrated with `ZeroHttpServer` `/metrics` endpoint.
+
+### 8. Sovereign Binary RPC & Zero-Copy Framing (`ZeroRpc`)
+- **`ZeroRpcFrame`**: Deterministic 32-byte fixed binary header (Magic bytes, message type, CRC32, payload length, and FastUlid correlation) with zero intermediate allocations.
+- **`ZeroRpcServer` & `ZeroRpcClient`**: Asynchronous multiplexed TCP RPC engine executing concurrent requests over persistent single-socket channels.
+- **`TokenBucketRateLimiter`**: Lock-free atomic token-bucket limiter mitigating DDoS and traffic spikes at microsecond granularity.
+- **`FastUlid`**: Microsecond-precision, lexicographically sortable 128-bit unique identifiers without heap string churn.
 
 ---
 
@@ -253,6 +261,25 @@ server.Start();
 // Health check available at: http://localhost:9090/health
 ```
 
+### 9. Sovereign Binary RPC (32-Byte Zero-Copy Framing)
+```csharp
+using ZeroNetwork.Rpc;
+
+// Server registration
+using var server = new ZeroRpcServer(port: 7070);
+server.RegisterMethod(0x1001, (frame, reqSpan) =>
+{
+    // High-speed RPC handler (zero intermediate allocations)
+    return new byte[] { 0x01, 0x02, 0x03 };
+});
+server.Start();
+
+// Client multiplexed invocation
+using var client = new ZeroRpcClient("127.0.0.1", port: 7070);
+await client.ConnectAsync();
+byte[] response = await client.InvokeAsync(methodHash: 0x1001, payload: new byte[] { 0xAA, 0xBB });
+```
+
 ---
 
 ## ⚡ BCL Optimization Benchmark Results (Before vs After)
@@ -261,6 +288,7 @@ The following empirical benchmarks demonstrate measured throughput and allocatio
 
 | Hot-Path Area | Standard .NET BCL Method | ZeroPlatform Replacement | Measured Speedup & Allocation Delta |
 | :--- | :--- | :--- | :--- |
+| **Binary RPC Framing** | gRPC / HTTP2 Protobuf (Heap Framing) | `ZeroRpcFrame` (32-B Header + FastUlid) | **Zero-Copy Native Span**, O(1) framing overhead |
 | **WebSocket Unmasking** | Scalar XOR Loop (`payload[i] ^= mask[i%4]`) | `ZeroFastMask.ApplyMask` (64-bit unrolled) | **9.95x Faster** (144.3 MB/s ➔ **1,435.5 MB/s**) |
 | **WebSocket Handshake** | `SHA1.Create().ComputeHash()` + Base64 | `ZeroSha1` + `ZeroBase64` | **100% Zero-Alloc** (1,604 ns + GC Heap ➔ **0 Bytes Heap Alloc**) |
 | **Base64 Encoding** | `Convert.ToBase64String(byte[])` | `ZeroBase64.Encode(Span<byte>, Span<char>)` | **In-Place Span-to-Span**, 0 string heap churn |
