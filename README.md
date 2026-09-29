@@ -4,7 +4,7 @@
 [![NuGet Version](https://img.shields.io/badge/nuget-v2.4.0-blue.svg)](https://www.nuget.org/packages/ZeroNetwork.Core/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Zero External Dependencies](https://img.shields.io/badge/Dependencies-0%20(Pure%20C%23)-brightgreen.svg)]()
-[![Tests: 94 Passed](https://img.shields.io/badge/Tests-94%20Passed%20(100%25)-brightgreen.svg)]()
+[![Tests: 115 Passed](https://img.shields.io/badge/Tests-115%20Passed%20(100%25)-brightgreen.svg)]()
 [![Multi-Targeting](https://img.shields.io/badge/.NET-8.0%20%7C%204.6.2%20%7C%20Standard%202.0-orange.svg)]()
 
 > **Architectural Standard**: 100% Pure C# BCL, Zero External Dependencies, Multi-Targeting across `.NET 8.0`, `.NET Framework 4.6.2`, and `.NET Standard 2.0`.
