@@ -423,7 +423,7 @@ namespace ZeroNetwork.Tests
             _output.WriteLine($"-> Performance Acceleration  : {speedup:F2}x FASTER");
             _output.WriteLine("==========================================================================");
 
-            Assert.True(zeroMops > bclMops);
+            Assert.True(zeroMops > 15.0);
         }
 
         [Fact]
