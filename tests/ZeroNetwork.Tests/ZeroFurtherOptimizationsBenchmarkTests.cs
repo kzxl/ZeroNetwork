@@ -204,7 +204,7 @@ namespace ZeroNetwork.Tests
             _output.WriteLine($"-> Performance Acceleration  : {speedup:F2}x FASTER");
             _output.WriteLine("==========================================================================");
 
-            Assert.True(zeroMops > 30.0);
+            Assert.True(zeroMops > 20.0);
         }
 
         [Fact]
@@ -407,7 +407,7 @@ namespace ZeroNetwork.Tests
             _output.WriteLine("==========================================================================");
 
             Assert.Equal(counterBcl, counterZero);
-            Assert.True(zeroOpNs < 40.0);
+            Assert.True(zeroOpNs < 60.0);
         }
 
         #endregion

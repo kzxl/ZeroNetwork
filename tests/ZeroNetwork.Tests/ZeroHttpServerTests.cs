@@ -77,5 +77,35 @@ namespace ZeroNetwork.Tests
                 Assert.False(server.IsRunning);
             }
         }
+
+        [Fact]
+        public async Task ZeroHttpServer_RateLimiter_And_TraceId_WorkCorrectly()
+        {
+            int port = GetFreePort();
+            using (var server = new ZeroHttpServer(port, "127.0.0.1"))
+            {
+                // Rate limiter: 1 req/sec, burst capacity = 1
+                server.WithRateLimiter(requestsPerSecond: 1.0, burstCapacity: 1.0);
+                server.MapGet("/api/test", req => ZeroHttpResponse.Text("OK"));
+                server.Start();
+
+                using (var http = new HttpClient())
+                {
+                    string url = $"http://127.0.0.1:{port}/api/test";
+
+                    // First request should succeed and have X-Request-Id header
+                    var resp1 = await http.GetAsync(url);
+                    Assert.Equal(HttpStatusCode.OK, resp1.StatusCode);
+                    Assert.True(resp1.Headers.Contains("X-Request-Id"));
+
+                    // Immediate second request should be throttled (429 Too Many Requests)
+                    var resp2 = await http.GetAsync(url);
+                    Assert.Equal((HttpStatusCode)429, resp2.StatusCode);
+                    Assert.True(resp2.Headers.Contains("Retry-After"));
+                }
+
+                server.Stop();
+            }
+        }
     }
 }

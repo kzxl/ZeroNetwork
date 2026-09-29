@@ -7,6 +7,8 @@ using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using ZeroPlatform.Concurrency.RateLimiting;
+using ZeroPrimitives.Core.Identifiers;
 
 namespace ZeroNetwork.Http
 {
@@ -15,6 +17,10 @@ namespace ZeroNetwork.Http
     /// </summary>
     public class ZeroHttpRequest
     {
+        /// <summary>
+        /// Gets or sets the unique, sortable 128-bit <see cref="FastUlid"/> correlation and trace ID.
+        /// </summary>
+        public FastUlid TraceId { get; set; } = FastUlid.NewUlid();
         public string Method { get; set; } = "GET";
         public string Path { get; set; } = "/";
         public string QueryString { get; set; } = string.Empty;
@@ -79,9 +85,21 @@ namespace ZeroNetwork.Http
         private bool _disposed;
         private long _requestsHandled;
         private readonly DateTime _startTime = DateTime.UtcNow;
+        private TokenBucketRateLimiter? _rateLimiter;
 
         public int Port => _port;
         public bool IsRunning => _serverCts != null && !_serverCts.IsCancellationRequested;
+
+        /// <summary>
+        /// Configures a token bucket rate limiter to protect the HTTP server against traffic spikes and DoS.
+        /// </summary>
+        /// <param name="requestsPerSecond">Sustained request refill rate per second.</param>
+        /// <param name="burstCapacity">Maximum allowed burst requests before throttling.</param>
+        public ZeroHttpServer WithRateLimiter(double requestsPerSecond, double burstCapacity)
+        {
+            _rateLimiter = new TokenBucketRateLimiter(burstCapacity, requestsPerSecond);
+            return this;
+        }
 
         public ZeroHttpServer(int port = 8080, string host = "0.0.0.0")
         {
@@ -216,6 +234,13 @@ namespace ZeroNetwork.Http
                             {
                                 int.TryParse(hVal, out contentLength);
                             }
+                            else if (hKey.Equals("X-Request-Id", StringComparison.OrdinalIgnoreCase) || hKey.Equals("X-Trace-Id", StringComparison.OrdinalIgnoreCase))
+                            {
+                                if (FastUlid.TryParse(hVal.AsSpan(), out var parsedUlid))
+                                {
+                                    request.TraceId = parsedUlid;
+                                }
+                            }
                         }
                     }
 
@@ -234,29 +259,43 @@ namespace ZeroNetwork.Http
 
                     Interlocked.Increment(ref _requestsHandled);
 
-                    // Route lookup
-                    string routeKey = $"{method.ToUpperInvariant()}:{path}";
-                    Func<ZeroHttpRequest, ZeroHttpResponse>? handler = null;
-                    lock (_lock)
-                    {
-                        _routes.TryGetValue(routeKey, out handler);
-                    }
-
                     ZeroHttpResponse response;
-                    if (handler != null)
+                    if (_rateLimiter != null && !_rateLimiter.TryAcquire(1.0))
                     {
-                        try
+                        response = new ZeroHttpResponse
                         {
-                            response = handler(request);
-                        }
-                        catch (Exception ex)
-                        {
-                            response = ZeroHttpResponse.Text("500 Internal Server Error\n" + ex.Message, statusCode: 500);
-                        }
+                            StatusCode = 429,
+                            StatusMessage = "Too Many Requests",
+                            ContentType = "text/plain; charset=utf-8",
+                            BodyBytes = Encoding.UTF8.GetBytes("429 Too Many Requests\nRate limit exceeded.")
+                        };
+                        response.Headers["Retry-After"] = "1";
                     }
                     else
                     {
-                        response = ZeroHttpResponse.NotFound();
+                        // Route lookup
+                        string routeKey = $"{method.ToUpperInvariant()}:{path}";
+                        Func<ZeroHttpRequest, ZeroHttpResponse>? handler = null;
+                        lock (_lock)
+                        {
+                            _routes.TryGetValue(routeKey, out handler);
+                        }
+
+                        if (handler != null)
+                        {
+                            try
+                            {
+                                response = handler(request);
+                            }
+                            catch (Exception ex)
+                            {
+                                response = ZeroHttpResponse.Text("500 Internal Server Error\n" + ex.Message, statusCode: 500);
+                            }
+                        }
+                        else
+                        {
+                            response = ZeroHttpResponse.NotFound();
+                        }
                     }
 
                     // Send response
@@ -264,6 +303,7 @@ namespace ZeroNetwork.Http
                     sb.Append($"HTTP/1.1 {response.StatusCode} {response.StatusMessage}\r\n");
                     sb.Append($"Content-Type: {response.ContentType}\r\n");
                     sb.Append($"Content-Length: {response.BodyBytes.Length}\r\n");
+                    sb.Append($"X-Request-Id: {request.TraceId}\r\n");
                     sb.Append("Connection: close\r\n");
 
                     foreach (var h in response.Headers)
